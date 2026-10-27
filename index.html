@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Escanor Indicator</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@900&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{--gold:#f5c542;--up:#22e07a;--down:#ff4d5e;--card:rgba(10,10,10,.72);--line:rgba(255,255,255,.14)}
+*{box-sizing:border-box;margin:0}
+html,body{background:#000;color:#fff;font-family:'Rajdhani',system-ui,sans-serif;min-height:100%}
+.bg{position:fixed;inset:0;z-index:-1;display:grid;place-items:center;pointer-events:none;overflow:hidden}
+.bg svg{width:min(140vw,860px);opacity:.2;filter:grayscale(1)}
+.bg b{position:absolute;bottom:2vh;font:900 22vw 'Cinzel Decorative',serif;color:#fff;opacity:.06;letter-spacing:.04em}
+.wrap{max-width:520px;margin:0 auto;padding:16px 14px 28px;padding-top:calc(16px + env(safe-area-inset-top,0px))}
+h1{font:900 40px/1 'Cinzel Decorative',serif;text-align:center;letter-spacing:.08em;text-shadow:0 0 18px rgba(245,197,66,.55),0 0 2px #fff}
+.sub{text-align:center;letter-spacing:.5em;color:var(--gold);font-weight:700;margin:6px 0 16px;font-size:14px}
+.tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
+.tab{flex:1 0 auto;padding:9px 14px;border:1px solid var(--line);background:var(--card);color:#fff;border-radius:10px;font:700 15px 'Rajdhani',sans-serif;cursor:pointer;letter-spacing:.04em}
+.tab.on{border-color:var(--gold);color:var(--gold);box-shadow:0 0 12px rgba(245,197,66,.35)}
+.live{display:block;width:100%;margin:12px 0;padding:12px;border:1px solid var(--gold);background:linear-gradient(90deg,#1a1400,#000);color:var(--gold);border-radius:10px;font:700 16px 'Rajdhani',sans-serif;letter-spacing:.12em;cursor:pointer}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px;backdrop-filter:blur(4px)}
+.head{display:flex;justify-content:space-between;align-items:center;padding:2px 4px 8px;font-weight:700;letter-spacing:.06em}
+.legend{font-size:13px;color:#ccc}.legend .u{color:var(--up)}.legend .d{color:var(--down)}
+canvas{width:100%;height:300px;display:block}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:12px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.stat small{display:block;color:#bbb;letter-spacing:.1em;font-size:12px;text-transform:uppercase}
+.stat span{font-size:26px;font-weight:700}
+.win{color:var(--up)}.loss{color:var(--down)}.gold{color:var(--gold)}
+.note{margin-top:14px;text-align:center;color:#888;font-size:12px}
+</style>
+</head>
+<body>
+<div class="bg"><div id="lion"></div><b>ESCANOR</b></div>
+<div class="wrap">
+  <h1>ESCANOR</h1>
+  <div class="sub">INDICATOR</div>
+  <div class="tabs" id="tabs"></div>
+  <button class="live" id="live">OPEN QX BROKER LIVE MARKET &#8599;</button>
+  <div class="card">
+    <div class="head"><span id="mname"></span><span class="legend"><span class="u">&#9650; CALL</span> &nbsp; <span class="d">&#9660; PUT</span></span></div>
+    <canvas id="chart"></canvas>
+  </div>
+  <div class="grid" id="stats"></div>
+  <div class="note" id="note"></div>
+</div>
+<script>
+/* ===== SETTINGS (edit these) ===== */
+const CONFIG = {
+  QX_URL: "https://qxbroker.com/en/trade",   // QX Broker live market link
+  API_URL: "",                                // later: your bot's JSON endpoint (empty = demo data)
+  MARKETS: ["USD/ZAR", "USD/BRL", "EUR/JPY", "CAD/JPY"],
+  VISIBLE: 60                                 // candles shown on screen
+};
+/* Data format your API should return for each market:
+   { candles: [{t,o,h,l,c}, ...],
+     signals: [{i: candleIndex, dir: "CALL"|"PUT", result: "win"|"loss", mtg: 0|1|2}, ...] }
+   mtg = 0 means won on the first entry (non-MTG); 1 or 2 = won after martingale step. */
+
+const $ = id => document.getElementById(id);
+const tg = window.Telegram && Telegram.WebApp;
+if (tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor("#000000"); tg.setBackgroundColor("#000000"); } catch (e) {} }
+
+/* ---- lion face background (black and white) ---- */
+function spikes(n, R, r, rot) {
+  const p = [];
+  for (let k = 0; k < n * 2; k++) {
+    const a = rot + k * Math.PI / n, d = k % 2 ? r : R;
+    p.push((200 + d * Math.cos(a)).toFixed(1) + "," + (200 + d * Math.sin(a)).toFixed(1));
+  }
+  return p.join(" ");
+}
+$("lion").innerHTML = `<svg viewBox="0 0 400 400">
+<polygon points="${spikes(26,198,150,0)}" fill="#fff"/>
+<polygon points="${spikes(22,172,128,.1)}" fill="#000" stroke="#fff" stroke-width="3"/>
+<polygon points="${spikes(18,148,112,.2)}" fill="#fff"/>
+<circle cx="122" cy="116" r="26" fill="#000" stroke="#fff" stroke-width="4"/><circle cx="278" cy="116" r="26" fill="#000" stroke="#fff" stroke-width="4"/>
+<ellipse cx="200" cy="215" rx="82" ry="98" fill="#000" stroke="#fff" stroke-width="4"/>
+<path d="M200 122V172M178 130L186 170M222 130L214 170" stroke="#fff" stroke-width="3" fill="none"/>
+<path d="M136 184L184 200L178 212L140 204Z M264 184L216 200L222 212L260 204Z" fill="#fff"/>
+<path d="M178 238H222L200 266Z" fill="#fff"/>
+<path d="M200 266V288M200 288Q176 310 150 292M200 288Q224 310 250 292" stroke="#fff" stroke-width="4" fill="none"/>
+</svg>`;
+
+/* ---- demo data (only so the layout works until your real API is connected) ---- */
+const BASE = {"USD/ZAR":18.2,"USD/BRL":5.4,"EUR/JPY":163,"CAD/JPY":110};
+function rng(s){return function(){s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function demoData(m) {
+  const r = rng([...m].reduce((a, c) => a + c.charCodeAt(0), 7) * 131);
+  let p = BASE[m] || 1; const candles = [], t0 = Date.now() - 120 * 60000;
+  for (let i = 0; i < 120; i++) {
+    const o = p, c = o * (1 + (r() - .5) * .004);
+    candles.push({t: t0 + i * 60000, o, c, h: Math.max(o, c) * (1 + r() * .0012), l: Math.min(o, c) * (1 - r() * .0012)});
+    p = c;
+  }
+  const signals = [];
+  for (let i = 6; i < 120; i += 5 + Math.floor(r() * 5)) {
+    const w = r() < .72;
+    signals.push({i, dir: r() < .5 ? "CALL" : "PUT", result: w ? "win" : "loss", mtg: w ? (r() < .7 ? 0 : (r() < .7 ? 1 : 2)) : 0});
+  }
+  return {candles, signals, demo: true};
+}
+async function loadMarket(m) {
+  if (CONFIG.API_URL) {
+    try {
+      const res = await fetch(CONFIG.API_URL + "?market=" + encodeURIComponent(m));
+      return await res.json();
+    } catch (e) {}
+  }
+  return demoData(m);
+}
+
+/* ---- stats ---- */
+function renderStats(sig) {
+  const total = sig.length, wins = sig.filter(s => s.result === "win"), losses = total - wins.length;
+  const non = wins.filter(s => !s.mtg).length, mtg = wins.length - non;
+  const pct = n => total ? (n / total * 100).toFixed(1) + "%" : "-";
+  const ratio = losses ? (wins.length / losses).toFixed(2) + " : 1" : (wins.length ? wins.length + " : 0" : "-");
+  const calls = sig.filter(s => s.dir === "CALL").length;
+  const items = [
+    ["Total Signals", total, ""], ["Accuracy", pct(wins.length), "gold"],
+    ["Win", wins.length, "win"], ["Loss", losses, "loss"],
+    ["Non-MTG Win", non, "win"], ["MTG Win", mtg, "win"],
+    ["Non-MTG Accuracy", pct(non), "gold"], ["Win Ratio", ratio, "gold"],
+    ["Call Signals", calls, "win"], ["Put Signals", total - calls, "loss"]
+  ];
+  $("stats").innerHTML = items.map(([l, v, c]) => `<div class="stat"><small>${l}</small><span class="${c}">${v}</span></div>`).join("");
+}
+
+/* ---- chart: candles with CALL above the candle, PUT below the candle ---- */
+const state = {market: CONFIG.MARKETS[0], candles: [], signals: []};
+function tri(ctx, x, y, size, up, color) {
+  ctx.fillStyle = color; ctx.beginPath();
+  if (up) { ctx.moveTo(x, y - size); ctx.lineTo(x - size * .8, y); ctx.lineTo(x + size * .8, y); }
+  else    { ctx.moveTo(x, y + size); ctx.lineTo(x - size * .8, y); ctx.lineTo(x + size * .8, y); }
+  ctx.closePath(); ctx.fill();
+}
+function draw() {
+  const cv = $("chart"), ctx = cv.getContext("2d"), dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const cs = state.candles; if (!cs.length) return;
+  const start = Math.max(0, cs.length - CONFIG.VISIBLE), vis = cs.slice(start);
+  const padL = 6, padR = 54, padT = 30, padB = 30;
+  let hi = Math.max(...vis.map(c => c.h)), lo = Math.min(...vis.map(c => c.l));
+  const pad = (hi - lo) * .06; hi += pad; lo -= pad;
+  const y = v => padT + (hi - v) / (hi - lo) * (H - padT - padB);
+  const cw = (W - padL - padR) / vis.length, x = k => padL + cw * k + cw / 2;
+  const dec = hi < 10 ? 4 : 3;
+  ctx.font = "11px Rajdhani,sans-serif"; ctx.textBaseline = "middle";
+  for (let g = 0; g <= 5; g++) {
+    const v = lo + (hi - lo) * g / 5, yy = y(v);
+    ctx.strokeStyle = "rgba(255,255,255,.08)"; ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(W - padR, yy); ctx.stroke();
+    ctx.fillStyle = "#999"; ctx.fillText(v.toFixed(dec), W - padR + 4, yy);
+  }
+  vis.forEach((c, k) => {
+    const col = c.c >= c.o ? "#22e07a" : "#ff4d5e", cx = x(k);
+    ctx.strokeStyle = col; ctx.fillStyle = col;
+    ctx.beginPath(); ctx.moveTo(cx, y(c.h)); ctx.lineTo(cx, y(c.l)); ctx.stroke();
+    const top = y(Math.max(c.o, c.c)), h = Math.max(1, Math.abs(y(c.o) - y(c.c)));
+    ctx.fillRect(cx - cw * .35, top, cw * .7, h);
+  });
+  const size = Math.max(5, Math.min(9, cw * 1.1));
+  state.signals.forEach(s => {
+    if (s.i < start || s.i >= cs.length) return;
+    const k = s.i - start, c = vis[k];
+    if (s.dir === "CALL") tri(ctx, x(k), y(c.h) - 5, size, true, "#22e07a");    // CALL: above the candle
+    else tri(ctx, x(k), y(c.l) + 5, size, false, "#ff4d5e");                    // PUT: below the candle
+  });
+}
+
+/* ---- UI wiring ---- */
+async function select(m) {
+  state.market = m;
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.m === m));
+  $("mname").textContent = m;
+  const d = await loadMarket(m);
+  state.candles = d.candles || []; state.signals = d.signals || [];
+  $("note").textContent = d.demo ? "DEMO DATA: sample candles and sample signals to show the layout. Connect your strategy and chart data to replace it." : "";
+  renderStats(state.signals); draw();
+}
+$("tabs").innerHTML = CONFIG.MARKETS.map(m => `<button class="tab" data-m="${m}">${m}</button>`).join("");
+$("tabs").onclick = e => { if (e.target.dataset.m) select(e.target.dataset.m); };
+$("live").onclick = () => tg ? tg.openLink(CONFIG.QX_URL) : window.open(CONFIG.QX_URL, "_blank");
+window.addEventListener("resize", draw);
+select(state.market);
+</script>
+</body>
+</html>
